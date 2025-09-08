@@ -2,6 +2,8 @@
 
 import platform
 import time
+import sys
+import select
 from typing import Dict, List, Optional, Union
 
 try:
@@ -90,6 +92,7 @@ class ServoController:
         self.port_handler = None
         self.packet_handler = None
         self._connected = False
+        self.joint_limits: Dict[int, Dict[str, int]] = {}
 
         # Validate servo type
         if self.servo_type not in ['sts', 'hls']:
@@ -543,6 +546,76 @@ class ServoController:
 
         return all_good
 
+    def joint_limit_calibration(self, motor_ids: Optional[List[int]] = None, frequency: int = 200):
+        """
+        Interactively finds the joint limits by continuously reading positions.
+
+        Keeps track of the min/max as the user moves each joint through its range of motion.
+
+        Args:
+            motor_ids: List of motor IDs to calibrate. If None, uses self.servo_ids.
+
+        Raises:
+            ConnectionError: If not connected.
+            CommunicationError: If cannot read motor positions.
+        """
+        if not self._connected:
+            raise ConnectionError("Not connected. Call connect() first.")
+
+        if motor_ids is None:
+            motor_ids = self.servo_ids
+
+        self.disable_all_servos()
+
+        print("\n--- Joint Limit Calibration ---")
+        print("Move each joint through its full range of motion.")
+
+        # Initialize joint_limits with current positions
+        initial_positions = self.read_positions(motor_ids)
+        joint_limits = {
+            motor_id: {'min': pos, 'max': pos} for motor_id, pos in initial_positions.items()
+        }
+
+        sorted_ids = sorted(motor_ids)
+        num_lines = len(sorted_ids) + 2
+        print("\n" * num_lines, end="")
+
+        while True:
+            # Check for user input to stop
+            # This is a non-blocking way to check for input
+            if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                sys.stdin.readline()
+                break
+
+            current_positions = self.read_positions(motor_ids)
+            for motor_id, pos in current_positions.items():
+                joint_limits[motor_id]['min'] = min(joint_limits[motor_id]['min'], pos)
+                joint_limits[motor_id]['max'] = max(joint_limits[motor_id]['max'], pos)
+
+            output_str = "Calibration running... Press Enter to STOP.\n"
+            output_str += "--------------------------------------------\n"
+            for motor_id in sorted_ids:
+                current = current_positions.get(motor_id, 'N/A')
+                min_val = joint_limits[motor_id]['min']
+                max_val = joint_limits[motor_id]['max']
+                output_str += f"  Motor {motor_id:<2}: Current={current:<5} Min={min_val:<5} Max={max_val:<5}\n"
+
+            # Move cursor up to overwrite previous text
+            sys.stdout.write("\033[F"*num_lines)
+            sys.stdout.write(output_str)
+            sys.stdout.flush()
+
+            time.sleep(1.0/frequency)
+
+        print("\n\n--- Calibration Complete ---")
+        self.joint_limits = joint_limits
+
+        print("Discovered Joint Limits:")
+        for motor_id in sorted(self.joint_limits.keys()):
+            limits = self.joint_limits[motor_id]
+            print(f"  Motor {motor_id}: Min={limits['min']:<5} Max={limits['max']:<5}")
+
+
     def read_all_positions(self) -> Dict[int, int]:
         """
         Read positions from all configured servos.
@@ -915,8 +988,16 @@ class ServoController:
 
             try:
                 # Validate position range
-                if not (0 <= position <= 4095):
-                    print(f"Warning: Position {position} out of range for motor {motor_id}. Clamping to [0, 4095]")
+                original_position = position
+                if motor_id in self.joint_limits:
+                    # Clamp to discovered joint limits if they exist
+                    min_lim = self.joint_limits[motor_id]['min']
+                    max_lim = self.joint_limits[motor_id]['max']
+                    position = max(min_lim, min(max_lim, position))
+                    if position != original_position:
+                        print(f"Warning: Position {original_position} for motor {motor_id} out of calibrated range [{min_lim}, {max_lim}]. Clamped to {position}.")
+                elif not (0 <= position <= 4095):
+                    print(f"Warning: Position {position} for motor {motor_id} out of absolute range [0, 4095]. Clamped to {position}.")
                     position = max(0, min(4095, position))
 
                 # Get torque limit for this motor

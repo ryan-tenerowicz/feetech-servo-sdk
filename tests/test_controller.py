@@ -396,3 +396,89 @@ class TestServoController:
                     pass
 
                 mock_disconnect.assert_called_once()
+
+    @patch('scservo_sdk.COMM_SUCCESS', 0)
+    def test_write_position_sts(self):
+        """Test writing position to STS servos."""
+        controller = ServoController([1, 2], servo_type="sts", port="/dev/ttyUSB0")
+        controller._connected = True
+        controller.packet_handler = Mock()
+
+        # Mock the return values for read1ByteTxRx. It's called twice per motor:
+        # 1. To check the operating mode.
+        # 2. To check if torque is enabled.
+        # We'll return (mode=0, success, no_error) and (torque_enabled=1, success, no_error)
+        controller.packet_handler.read1ByteTxRx.side_effect = [
+            (0, 0, 0), (1, 0, 0),  # For motor 1
+            (0, 0, 0), (1, 0, 0)   # For motor 2
+        ]
+
+        controller.packet_handler.groupSyncWrite.txPacket.return_value = 0
+
+        positions = {1: 1024, 2: 2048}
+        controller.write_position(positions, speed=100, acceleration=10)
+
+        controller.packet_handler.SyncWritePosEx.assert_any_call(1, 1024, 100, 10)
+        controller.packet_handler.SyncWritePosEx.assert_any_call(2, 2048, 100, 10)
+        controller.packet_handler.groupSyncWrite.txPacket.assert_called_once()
+    @patch('scservo_sdk.COMM_SUCCESS', 0)
+    def test_write_position_hls_with_torque(self):
+        """Test writing position to HLS servos with torque limit."""
+        controller = ServoController([1, 2], servo_type="hls", port="/dev/ttyUSB0")
+        controller._connected = True
+        controller.packet_handler = Mock()
+
+        # Mock the return values for read1ByteTxRx. It's called twice per motor:
+        # 1. To check the operating mode.
+        # 2. To check if torque is enabled.
+        # We'll return (mode=0, success, no_error) and (torque_enabled=1, success, no_error)
+        controller.packet_handler.read1ByteTxRx.side_effect = [
+            (0, 0, 0), (1, 0, 0),  # For motor 1
+            (0, 0, 0), (1, 0, 0)   # For motor 2
+        ]
+
+        controller.packet_handler.groupSyncWrite.txPacket.return_value = 0
+
+        positions = {1: 1024, 2: 2048}
+        torque_limits = {1: 0.5, 2: 0.8}
+        controller.write_position(positions, torque_limit_dict=torque_limits)
+
+        # torque_value is normalized to 0-1000
+        controller.packet_handler.SyncWritePosEx.assert_any_call(1, 1024, 32767, 0, 500)
+        controller.packet_handler.SyncWritePosEx.assert_any_call(2, 2048, 32767, 0, 800)
+        controller.packet_handler.groupSyncWrite.txPacket.assert_called_once()
+
+    @patch('scservo_sdk.COMM_SUCCESS', 0)
+    def test_write_position_clamps_to_joint_limits(self):
+        """Test that write_position clamps values to joint_limits."""
+        controller = ServoController([1, 2], servo_type="sts", port="/dev/ttyUSB0")
+        controller._connected = True
+        controller.packet_handler = Mock()
+
+        # Mock the return values for read1ByteTxRx. It's called twice per motor:
+        # 1. To check the operating mode.
+        # 2. To check if torque is enabled.
+        # We'll return (mode=0, success, no_error) and (torque_enabled=1, success, no_error)
+        controller.packet_handler.read1ByteTxRx.side_effect = [
+            (0, 0, 0), (1, 0, 0),  # For motor 1
+            (0, 0, 0), (1, 0, 0)   # For motor 2
+        ]
+
+        controller.packet_handler.groupSyncWrite.txPacket.return_value = 0
+
+        # Set joint limits
+        controller.joint_limits = {
+            1: {'min': 1000, 'max': 2000},
+            2: {'min': 500, 'max': 1500}
+        }
+
+        positions = {
+            1: 500,    # Below min, should be clamped to 1000
+            2: 2000    # Above max, should be clamped to 1500
+        }
+        controller.write_position(positions)
+
+        # Check that the clamped values were used
+        controller.packet_handler.SyncWritePosEx.assert_any_call(1, 1000, 32767, 0)
+        controller.packet_handler.SyncWritePosEx.assert_any_call(2, 1500, 32767, 0)
+        controller.packet_handler.groupSyncWrite.txPacket.assert_called_once()
