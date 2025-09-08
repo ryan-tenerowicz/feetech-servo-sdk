@@ -38,16 +38,17 @@ def main():
     with ctrl1, ctrl2:
         # Read voltage from first servo on first port
         voltage1 = ctrl1.read_voltage(SERVO_IDS[0])
+        voltage2 = ctrl2.read_voltage(SERVO_IDS[1])
 
         # Leader arm should have voltage ~5V, follower arm ~12V
         if voltage1 < VOLTAGE_THRESHOLD:
             leader, follower = ctrl1, ctrl2
             print(f"{ports[0]}: Leader (voltage: {voltage1:.1f}V)")
-            print(f"{ports[1]}: Follower")
+            print(f"{ports[1]}: Follower (voltage: {voltage2:.1f}V)")
         else:
             leader, follower = ctrl2, ctrl1
             print(f"{ports[0]}: Follower (voltage: {voltage1:.1f}V)")
-            print(f"{ports[1]}: Leader")
+            print(f"{ports[1]}: Leader (voltage: {voltage2:.1f}V)")
 
         follower.joint_limit_calibration()
 

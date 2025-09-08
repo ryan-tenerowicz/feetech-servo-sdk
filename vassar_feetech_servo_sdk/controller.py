@@ -3,6 +3,8 @@
 import platform
 import time
 import sys
+import os
+import json
 import select
 from typing import Dict, List, Optional, Union
 
@@ -74,7 +76,8 @@ class ServoController:
     PHASE_DATA_LENGTH = 1      # Bytes to read for phase
 
     def __init__(self, servo_ids: List[int], servo_type: str = "sts",
-                 port: Optional[str] = None, baudrate: int = 1000000):
+                 port: Optional[str] = None, baudrate: int = 1000000,
+                 calibration_file: str = "joint_limits.json"):
         """
         Initialize ServoController.
 
@@ -83,10 +86,12 @@ class ServoController:
             servo_type: Type of servo - 'sts' or 'hls' (default: 'sts').
             port: Serial port path. If None, will attempt auto-detection.
             baudrate: Communication baudrate (default: 1000000).
+            calibration_file: Path to the joint limit calibration file.
         """
         self.servo_ids = servo_ids
         self.servo_type = servo_type.lower()
         self.port = port if port else find_servo_port()
+        self.calibration_file = calibration_file
         self.baudrate = baudrate
 
         self.port_handler = None
@@ -546,7 +551,7 @@ class ServoController:
 
         return all_good
 
-    def joint_limit_calibration(self, motor_ids: Optional[List[int]] = None, frequency: int = 200):
+    def joint_limit_calibration(self, motor_ids: Optional[List[int]] = None, frequency: int = 200, use_calibration_file: bool = True):
         """
         Interactively finds the joint limits by continuously reading positions.
 
@@ -554,6 +559,8 @@ class ServoController:
 
         Args:
             motor_ids: List of motor IDs to calibrate. If None, uses self.servo_ids.
+            frequency: The frequency (Hz) to read servo positions during calibration.
+            use_calibration_file: If True, attempts to load limits from `self.calibration_file` and saves them after calibration.
 
         Raises:
             ConnectionError: If not connected.
@@ -565,12 +572,25 @@ class ServoController:
         if motor_ids is None:
             motor_ids = self.servo_ids
 
+        # Attempt to load from previous calibration file if requested and file exists
+        if use_calibration_file:
+            if os.path.exists(self.calibration_file) and os.path.isfile(self.calibration_file):
+                print(f"\n--- Loading joint limits from {self.calibration_file} ---")
+                with open(self.calibration_file, 'r') as f:
+                    # JSON keys are strings, so convert them back to integers
+                    self.joint_limits = {int(k): v for k, v in json.load(f).items()}
+                print("✓ Joint limits loaded successfully.")
+                self.disable_all_servos()
+                return
+            else:
+                print(f"\n--- Could not find joint limit calibration file {self.calibration_file}, continuing manual calibration process ---")
+
+        # Disable torque so that user can freely move arm
         self.disable_all_servos()
 
         print("\n--- Joint Limit Calibration ---")
         print("Move each joint through its full range of motion.")
 
-        # Initialize joint_limits with current positions
         initial_positions = self.read_positions(motor_ids)
         joint_limits = {
             motor_id: {'min': pos, 'max': pos} for motor_id, pos in initial_positions.items()
@@ -615,6 +635,11 @@ class ServoController:
             limits = self.joint_limits[motor_id]
             print(f"  Motor {motor_id}: Min={limits['min']:<5} Max={limits['max']:<5}")
 
+        if use_calibration_file:
+            print(f"\nSaving joint limits to {self.calibration_file}...")
+            with open(self.calibration_file, 'w') as f:
+                json.dump(self.joint_limits, f, indent=4)
+            print("✓ Joint limits saved.")
 
     def read_all_positions(self) -> Dict[int, int]:
         """
