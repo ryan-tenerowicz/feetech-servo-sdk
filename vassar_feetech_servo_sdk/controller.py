@@ -77,7 +77,7 @@ class ServoController:
 
     def __init__(self, servo_ids: List[int], servo_type: str = "sts",
                  port: Optional[str] = None, baudrate: int = 1000000,
-                 calibration_file: str = None):
+                 calibration_file: str = None, debug: bool = True):
         """
         Initialize ServoController.
 
@@ -87,12 +87,14 @@ class ServoController:
             port: Serial port path. If None, will attempt auto-detection.
             baudrate: Communication baudrate (default: 1000000).
             calibration_file: Path to the joint limit calibration file.
+            debug: If True, print debug and status messages (default: True).
         """
         self.servo_ids = servo_ids
         self.servo_type = servo_type.lower()
         self.port = port if port else find_servo_port()
         self.baudrate = baudrate
         self.calibration_file = calibration_file if calibration_file else f"{port.replace('/', '_')}_joint_limits.json"
+        self.debug = debug
 
 
         self.port_handler = None
@@ -137,20 +139,20 @@ class ServoController:
         self._connected = True
 
         # Check and set phase to 0 for all servos
-        print("Checking servo phase values...")
+        if self.debug: print("Checking servo phase values...")
         for motor_id in self.servo_ids:
             try:
                 current_phase = self.read_phase(motor_id)
                 if current_phase != 0:
-                    print(f"Motor {motor_id}: Phase is {current_phase}, setting to 0...")
+                    if self.debug: print(f"Motor {motor_id}: Phase is {current_phase}, setting to 0...")
                     if self.set_phase(motor_id, 0):
-                        print(f"Motor {motor_id}: Phase set to 0 ✓")
+                        if self.debug: print(f"Motor {motor_id}: Phase set to 0 ✓")
                     else:
-                        print(f"Motor {motor_id}: Failed to set phase to 0")
+                        if self.debug: print(f"Motor {motor_id}: Failed to set phase to 0")
                 else:
-                    print(f"Motor {motor_id}: Phase already 0 ✓")
+                    if self.debug: print(f"Motor {motor_id}: Phase already 0 ✓")
             except Exception as e:
-                print(f"Motor {motor_id}: Error checking/setting phase - {e}")
+                if self.debug: print(f"Motor {motor_id}: Error checking/setting phase - {e}")
 
     def disconnect(self) -> None:
         """Disconnect from the servos."""
@@ -222,7 +224,7 @@ class ServoController:
         # Add all motor IDs to the group
         for motor_id in motor_ids:
             if not groupSyncRead.addParam(motor_id):
-                print(f"Warning: Failed to add motor {motor_id} to group read")
+                if self.debug: print(f"Warning: Failed to add motor {motor_id} to group read")
                 continue
 
         # Perform the group read
@@ -251,11 +253,11 @@ class ServoController:
                 )
                 positions[motor_id] = position
             else:
-                print(f"Warning: Failed to get data for motor {motor_id}")
+                if self.debug: print(f"Warning: Failed to get data for motor {motor_id}")
 
             if error != 0:
-                print(f"Warning: Motor {motor_id} error: "
-                      f"{self.packet_handler.getRxPacketError(error)}")
+                if self.debug: print(f"Warning: Motor {motor_id} error: "
+                                      f"{self.packet_handler.getRxPacketError(error)}")
 
         # Clear parameters for next read
         groupSyncRead.clearParam()
@@ -325,7 +327,7 @@ class ServoController:
         # Add all motor IDs to the group
         for motor_id in motor_ids:
             if not groupSyncRead.addParam(motor_id):
-                print(f"Warning: Failed to add motor {motor_id} to group read")
+                if self.debug: print(f"Warning: Failed to add motor {motor_id} to group read")
                 continue
 
         # Perform the group read
@@ -355,11 +357,11 @@ class ServoController:
                 # Convert to volts (0.1V per unit)
                 voltages[motor_id] = voltage_raw * 0.1
             else:
-                print(f"Warning: Failed to get voltage data for motor {motor_id}")
+                if self.debug: print(f"Warning: Failed to get voltage data for motor {motor_id}")
 
             if error != 0:
-                print(f"Warning: Motor {motor_id} error: "
-                      f"{self.packet_handler.getRxPacketError(error)}")
+                if self.debug: print(f"Warning: Motor {motor_id} error: "
+                                      f"{self.packet_handler.getRxPacketError(error)}")
 
         # Clear parameters for next read
         groupSyncRead.clearParam()
@@ -429,7 +431,7 @@ class ServoController:
                 comm_result, error = self.packet_handler.unLockEprom(motor_id)
 
             if comm_result != scs.COMM_SUCCESS:
-                print(f"Warning: Failed to unlock EEPROM for motor {motor_id}")
+                if self.debug: print(f"Warning: Failed to unlock EEPROM for motor {motor_id}")
                 return False
 
             # Write phase value
@@ -437,7 +439,7 @@ class ServoController:
 
             if comm_result != scs.COMM_SUCCESS:
                 self._lock_eeprom_safe(motor_id)
-                print(f"Failed to set phase for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
+                if self.debug: print(f"Failed to set phase for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
                 return False
 
             # Lock EEPROM
@@ -446,7 +448,7 @@ class ServoController:
             else:  # hls
                 comm_result, error = self.packet_handler.LockEprom(motor_id)
 
-            if comm_result != scs.COMM_SUCCESS:
+            if comm_result != scs.COMM_SUCCESS and self.debug:
                 print(f"Warning: Failed to lock EEPROM for motor {motor_id}")
 
             # Give servo time to process
@@ -456,7 +458,7 @@ class ServoController:
 
         except Exception as e:
             self._lock_eeprom_safe(motor_id)
-            print(f"Error setting phase for motor {motor_id}: {e}")
+            if self.debug: print(f"Error setting phase for motor {motor_id}: {e}")
             return False
 
     def set_middle_position(self, motor_ids: Optional[List[int]] = None) -> bool:
@@ -484,27 +486,27 @@ class ServoController:
 
         if self.servo_type == "hls":
             # HLS servos use reOfsCal method
-            print("\nSetting middle position using HLS offset calibration...")
+            if self.debug: print("\nSetting middle position using HLS offset calibration...")
             all_success = True
 
             for motor_id in motor_ids:
                 # Calibrate current position to 2048
                 comm_result, error = self.packet_handler.reOfsCal(motor_id, 2048)
                 if comm_result != scs.COMM_SUCCESS:
-                    print(f"Motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
+                    if self.debug: print(f"Motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
                     all_success = False
                 elif error != 0:
-                    print(f"Motor {motor_id}: {self.packet_handler.getRxPacketError(error)}")
+                    if self.debug: print(f"Motor {motor_id}: {self.packet_handler.getRxPacketError(error)}")
                     all_success = False
                 else:
-                    print(f"Motor {motor_id}: Calibrated to 2048 ✓")
+                    if self.debug: print(f"Motor {motor_id}: Calibrated to 2048 ✓")
 
             if not all_success:
                 raise CommunicationError("Failed to calibrate some HLS servos")
 
         else:
             # STS servos use torque=128 method
-            print("\nSetting middle position using sync write...")
+            if self.debug: print("\nSetting middle position using sync write...")
 
             # Feetech register address for torque enable
             TORQUE_ENABLE = 40  # Write 128 to calibrate current position to 2048
@@ -534,21 +536,21 @@ class ServoController:
         # Verify positions
         positions = self.read_positions(motor_ids)
 
-        print("\nVerifying middle position...")
+        if self.debug: print("\nVerifying middle position...")
         all_good = True
         for motor_id in sorted(positions.keys()):
             pos = positions[motor_id]
             diff = pos - 2048
             if abs(diff) > 10:
                 all_good = False
-                print(f"Motor {motor_id}: {pos} (off by {diff:+d})")
+                if self.debug: print(f"Motor {motor_id}: {pos} (off by {diff:+d})")
             else:
-                print(f"Motor {motor_id}: {pos} ✓")
+                if self.debug: print(f"Motor {motor_id}: {pos} ✓")
 
         if all_good:
-            print("✓ Success! All servos set to middle position (2048)")
+            if self.debug: print("✓ Success! All servos set to middle position (2048)")
         else:
-            print("⚠ Some servos are not at 2048")
+            if self.debug: print("⚠ Some servos are not at 2048")
 
         return all_good
 
@@ -576,19 +578,20 @@ class ServoController:
         # Attempt to load from previous calibration file if requested and file exists
         if use_calibration_file:
             if os.path.isfile(self.calibration_file):
-                print(f"\n--- Loading joint limits from {self.calibration_file} ---")
+                if self.debug: print(f"\n--- Loading joint limits from {self.calibration_file} ---")
                 with open(self.calibration_file, 'r') as f:
                     # JSON keys are strings, so convert them back to integers
                     self.joint_limits = {int(k): v for k, v in json.load(f).items()}
-                print("✓ Joint limits loaded successfully.")
+                if self.debug: print("✓ Joint limits loaded successfully.")
                 self.disable_all_servos()
                 return
             else:
-                print(f"\n--- Could not find joint limit calibration file {self.calibration_file}, continuing manual calibration process ---")
+                if self.debug: print(f"\n--- Could not find joint limit calibration file {self.calibration_file}, continuing manual calibration process ---")
 
         # Disable torque so that user can freely move arm
         self.disable_all_servos()
 
+        # Don't hide calibration behind debug because it's necessary to guide user through the process.
         print("\n--- Joint Limit Calibration ---")
         print("Move each joint through its full range of motion.")
 
@@ -629,16 +632,17 @@ class ServoController:
         print("\n\n--- Calibration Complete ---")
         self.joint_limits = joint_limits
 
-        print("Discovered Joint Limits:")
-        for motor_id in sorted(self.joint_limits.keys()):
-            limits = self.joint_limits[motor_id]
-            print(f"  Motor {motor_id}: Min={limits['min']:<5} Max={limits['max']:<5}")
+        if self.debug:
+            print("Discovered Joint Limits:")
+            for motor_id in sorted(self.joint_limits.keys()):
+                limits = self.joint_limits[motor_id]
+                print(f"  Motor {motor_id}: Min={limits['min']:<5} Max={limits['max']:<5}")
 
         if use_calibration_file:
-            print(f"\nSaving joint limits to {self.calibration_file}...")
+            if self.debug: print(f"\nSaving joint limits to {self.calibration_file}...")
             with open(self.calibration_file, 'w') as f:
                 json.dump(self.joint_limits, f, indent=4)
-            print("✓ Joint limits saved.")
+            if self.debug: print("✓ Joint limits saved.")
 
     def read_all_positions(self) -> Dict[int, int]:
         """
@@ -698,17 +702,17 @@ class ServoController:
 
         try:
             # Step 1: Verify we can communicate with the servo at current ID
-            print(f"\nVerifying communication with servo ID {current_id}...")
+            if self.debug: print(f"\nVerifying communication with servo ID {current_id}...")
             model_number, comm_result, error = self.packet_handler.ping(current_id)
             if comm_result != scs.COMM_SUCCESS:
                 raise CommunicationError(
                     f"Cannot communicate with servo ID {current_id}. "
                     f"Error: {self.packet_handler.getTxRxResult(comm_result)}"
                 )
-            print(f"✓ Servo ID {current_id} found")
+            if self.debug: print(f"✓ Servo ID {current_id} found")
 
             # Step 2: Unlock EEPROM
-            print("Unlocking EEPROM...")
+            if self.debug: print("Unlocking EEPROM...")
             if self.servo_type == "sts":
                 comm_result, error = self.packet_handler.unLockEprom(current_id)
             elif self.servo_type == "hls":
@@ -718,10 +722,10 @@ class ServoController:
                 raise CommunicationError(
                     f"Failed to unlock EEPROM: {self.packet_handler.getTxRxResult(comm_result)}"
                 )
-            print("✓ EEPROM unlocked")
+            if self.debug: print("✓ EEPROM unlocked")
 
             # Step 3: Write new ID
-            print(f"Writing new ID {new_id}...")
+            if self.debug: print(f"Writing new ID {new_id}...")
             comm_result, error = self.packet_handler.write1ByteTxRx(current_id, ID_ADDR, new_id)
 
             if comm_result != scs.COMM_SUCCESS:
@@ -730,18 +734,18 @@ class ServoController:
                 raise CommunicationError(
                     f"Failed to write new ID: {self.packet_handler.getTxRxResult(comm_result)}"
                 )
-            print(f"✓ New ID {new_id} written")
+            if self.debug: print(f"✓ New ID {new_id} written")
 
             # Step 4: Lock EEPROM
-            print("Locking EEPROM...")
+            if self.debug: print("Locking EEPROM...")
             if self.servo_type == "sts":
                 comm_result, error = self.packet_handler.LockEprom(current_id)
             elif self.servo_type == "hls":
                 comm_result, error = self.packet_handler.LockEprom(current_id)
 
-            if comm_result != scs.COMM_SUCCESS:
+            if comm_result != scs.COMM_SUCCESS and self.debug:
                 print(f"⚠️  Warning: Failed to lock EEPROM: {self.packet_handler.getTxRxResult(comm_result)}")
-            else:
+            elif self.debug:
                 print("✓ EEPROM locked")
 
             # Give servo time to process
@@ -807,7 +811,7 @@ class ServoController:
                 comm_result, error = self.packet_handler.unLockEprom(motor_id)
 
             if comm_result != scs.COMM_SUCCESS:
-                print(f"Warning: Failed to unlock EEPROM for motor {motor_id}")
+                if self.debug: print(f"Warning: Failed to unlock EEPROM for motor {motor_id}")
                 return False
 
             # Write new mode
@@ -815,7 +819,7 @@ class ServoController:
 
             if comm_result != scs.COMM_SUCCESS:
                 self._lock_eeprom_safe(motor_id)
-                print(f"Failed to set mode for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
+                if self.debug: print(f"Failed to set mode for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
                 return False
 
             # Lock EEPROM
@@ -824,7 +828,7 @@ class ServoController:
             else:  # hls
                 comm_result, error = self.packet_handler.LockEprom(motor_id)
 
-            if comm_result != scs.COMM_SUCCESS:
+            if comm_result != scs.COMM_SUCCESS and self.debug:
                 print(f"Warning: Failed to lock EEPROM for motor {motor_id}")
 
             # Give servo time to process
@@ -834,7 +838,7 @@ class ServoController:
 
         except Exception as e:
             self._lock_eeprom_safe(motor_id)
-            print(f"Error setting mode for motor {motor_id}: {e}")
+            if self.debug: print(f"Error setting mode for motor {motor_id}: {e}")
             return False
 
     def write_torque(self, torque_dict: Dict[int, float]) -> Dict[int, bool]:
@@ -876,7 +880,7 @@ class ServoController:
             try:
                 # Validate normalized torque range
                 if not (-1.0 <= torque_normalized <= 1.0):
-                    print(f"Warning: Torque {torque_normalized} out of range for motor {motor_id}. Clamping to [-1.0, 1.0]")
+                    if self.debug: print(f"Warning: Torque {torque_normalized} out of range for motor {motor_id}. Clamping to [-1.0, 1.0]")
                     torque_normalized = max(-1.0, min(1.0, torque_normalized))
 
                 # Map torque with direction bit in bit 15
@@ -891,15 +895,15 @@ class ServoController:
                 mode_data, comm_result, error = self.packet_handler.read1ByteTxRx(motor_id, MODE_ADDR)
 
                 if comm_result != scs.COMM_SUCCESS:
-                    print(f"Failed to read mode for motor {motor_id}")
+                    if self.debug: print(f"Failed to read mode for motor {motor_id}")
                     results[motor_id] = False
                     continue
 
                 # Switch to torque mode if needed
                 if mode_data != 2:
-                    print(f"Motor {motor_id} is in mode {mode_data}, switching to torque mode (2)...")
+                    if self.debug: print(f"Motor {motor_id} is in mode {mode_data}, switching to torque mode (2)...")
                     if not self.set_operating_mode(motor_id, 2):
-                        print(f"Failed to switch motor {motor_id} to torque mode")
+                        if self.debug: print(f"Failed to switch motor {motor_id} to torque mode")
                         results[motor_id] = False
                         continue
 
@@ -907,20 +911,20 @@ class ServoController:
                 torque_enabled, comm_result, error = self.packet_handler.read1ByteTxRx(motor_id, TORQUE_ENABLE_ADDR)
                 if comm_result == scs.COMM_SUCCESS and torque_enabled != 1:
                     comm_result, error = self.packet_handler.write1ByteTxRx(motor_id, TORQUE_ENABLE_ADDR, 1)
-                    if comm_result != scs.COMM_SUCCESS:
+                    if comm_result != scs.COMM_SUCCESS and self.debug:
                         print(f"Warning: Failed to enable torque for motor {motor_id}")
 
                 # Write torque value (16-bit signed, little-endian)
                 comm_result, error = self.packet_handler.write2ByteTxRx(motor_id, GOAL_TORQUE_ADDR, torque_value)
 
                 if comm_result != scs.COMM_SUCCESS:
-                    print(f"Failed to write torque for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
+                    if self.debug: print(f"Failed to write torque for motor {motor_id}: {self.packet_handler.getTxRxResult(comm_result)}")
                     results[motor_id] = False
                 else:
                     results[motor_id] = True
 
             except Exception as e:
-                print(f"Error writing torque for motor {motor_id}: {e}")
+                if self.debug: print(f"Error writing torque for motor {motor_id}: {e}")
                 results[motor_id] = False
 
         return results
@@ -979,15 +983,15 @@ class ServoController:
                 mode_data, comm_result, error = self.packet_handler.read1ByteTxRx(motor_id, MODE_ADDR)
 
                 if comm_result != scs.COMM_SUCCESS:
-                    print(f"Failed to read mode for motor {motor_id}")
+                    if self.debug: print(f"Failed to read mode for motor {motor_id}")
                     results[motor_id] = False
                     continue
 
                 # Switch to position mode if needed
                 if mode_data != 0:
-                    print(f"Motor {motor_id} is in mode {mode_data}, switching to position mode (0)...")
+                    if self.debug: print(f"Motor {motor_id} is in mode {mode_data}, switching to position mode (0)...")
                     if not self.set_operating_mode(motor_id, 0):
-                        print(f"Failed to switch motor {motor_id} to position mode")
+                        if self.debug: print(f"Failed to switch motor {motor_id} to position mode")
                         results[motor_id] = False
                         continue
 
@@ -995,11 +999,11 @@ class ServoController:
                 torque_enabled, comm_result, error = self.packet_handler.read1ByteTxRx(motor_id, TORQUE_ENABLE_ADDR)
                 if comm_result == scs.COMM_SUCCESS and torque_enabled != 1:
                     comm_result, error = self.packet_handler.write1ByteTxRx(motor_id, TORQUE_ENABLE_ADDR, 1)
-                    if comm_result != scs.COMM_SUCCESS:
+                    if comm_result != scs.COMM_SUCCESS and self.debug:
                         print(f"Warning: Failed to enable torque for motor {motor_id}")
 
             except Exception as e:
-                print(f"Error preparing motor {motor_id}: {e}")
+                if self.debug: print(f"Error preparing motor {motor_id}: {e}")
                 results[motor_id] = False
 
         # Clear any existing sync write parameters
@@ -1019,16 +1023,16 @@ class ServoController:
                     max_lim = self.joint_limits[motor_id]['max']
                     position = max(min_lim, min(max_lim, position))
                     if position != original_position:
-                        print(f"Warning: Position {original_position} for motor {motor_id} out of calibrated range [{min_lim}, {max_lim}]. Clamped to {position}.")
+                        if self.debug: print(f"Warning: Position {original_position} for motor {motor_id} out of calibrated range [{min_lim}, {max_lim}]. Clamped to {position}.")
                 elif not (0 <= position <= 4095):
-                    print(f"Warning: Position {position} for motor {motor_id} out of absolute range [0, 4095]. Clamped to {position}.")
+                    if self.debug: print(f"Warning: Position {position} for motor {motor_id} out of absolute range [0, 4095]. Clamped to {position}.")
                     position = max(0, min(4095, position))
 
                 # Get torque limit for this motor
                 if self.servo_type == "hls" and torque_limit_dict and motor_id in torque_limit_dict:
                     torque_limit_normalized = torque_limit_dict[motor_id]
                     if not (0.0 <= torque_limit_normalized <= 1.0):
-                        print(f"Warning: Torque limit {torque_limit_normalized} out of range for motor {motor_id}. Clamping to [0.0, 1.0]")
+                        if self.debug: print(f"Warning: Torque limit {torque_limit_normalized} out of range for motor {motor_id}. Clamping to [0.0, 1.0]")
                         torque_limit_normalized = max(0.0, min(1.0, torque_limit_normalized))
 
                     # Convert to 0-1000 range (0.1% units)
@@ -1044,19 +1048,19 @@ class ServoController:
                     add_result = self.packet_handler.SyncWritePosEx(motor_id, position, speed, acceleration)
 
                 if not add_result:
-                    print(f"Failed to add sync write parameters for motor {motor_id}")
+                    if self.debug: print(f"Failed to add sync write parameters for motor {motor_id}")
                     results[motor_id] = False
                 else:
                     results[motor_id] = True
 
             except Exception as e:
-                print(f"Error adding parameters for motor {motor_id}: {e}")
+                if self.debug: print(f"Error adding parameters for motor {motor_id}: {e}")
                 results[motor_id] = False
 
         # Execute sync write
         comm_result = self.packet_handler.groupSyncWrite.txPacket()
         if comm_result != scs.COMM_SUCCESS:
-            print(f"Sync write failed: {self.packet_handler.getTxRxResult(comm_result)}")
+            if self.debug: print(f"Sync write failed: {self.packet_handler.getTxRxResult(comm_result)}")
             # Mark all as failed if sync write failed
             for motor_id in position_dict.keys():
                 if motor_id not in results:
@@ -1080,20 +1084,22 @@ class ServoController:
         # Memory address for torque enable
         TORQUE_ENABLE_ADDR = 40  # Same for both STS and HLS
 
-        print("\nDisabling all servos...")
+        if self.debug:
+            print("\nDisabling all servos...")
 
         for motor_id in self.servo_ids:
             try:
                 # Write 0 to disable torque
                 comm_result, error = self.packet_handler.write1ByteTxRx(motor_id, TORQUE_ENABLE_ADDR, 0)
 
-                if comm_result == scs.COMM_SUCCESS:
-                    print(f"Motor {motor_id}: Disabled ✓")
-                else:
-                    print(f"Motor {motor_id}: Failed to disable - {self.packet_handler.getTxRxResult(comm_result)}")
+                if self.debug:
+                    if comm_result == scs.COMM_SUCCESS:
+                        print(f"Motor {motor_id}: Disabled ✓")
+                    else:
+                        print(f"Motor {motor_id}: Failed to disable - {self.packet_handler.getTxRxResult(comm_result)}")
 
             except Exception as e:
-                print(f"Motor {motor_id}: Error disabling - {e}")
+                if self.debug: print(f"Motor {motor_id}: Error disabling - {e}")
 
         # Give servos time to process
         time.sleep(0.1)
