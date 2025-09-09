@@ -77,7 +77,7 @@ class ServoController:
 
     def __init__(self, servo_ids: List[int], servo_type: str = "sts",
                  port: Optional[str] = None, baudrate: int = 1000000,
-                 calibration_file: str = "joint_limits.json"):
+                 calibration_file: str = None):
         """
         Initialize ServoController.
 
@@ -91,8 +91,9 @@ class ServoController:
         self.servo_ids = servo_ids
         self.servo_type = servo_type.lower()
         self.port = port if port else find_servo_port()
-        self.calibration_file = calibration_file
         self.baudrate = baudrate
+        self.calibration_file = calibration_file if calibration_file else f"{port.replace('/', '_')}_joint_limits.json"
+
 
         self.port_handler = None
         self.packet_handler = None
@@ -551,7 +552,7 @@ class ServoController:
 
         return all_good
 
-    def joint_limit_calibration(self, motor_ids: Optional[List[int]] = None, frequency: int = 200, use_calibration_file: bool = True):
+    def joint_limit_calibration(self, motor_ids: Optional[List[int]] = None, use_calibration_file: bool = True):
         """
         Interactively finds the joint limits by continuously reading positions.
 
@@ -574,7 +575,7 @@ class ServoController:
 
         # Attempt to load from previous calibration file if requested and file exists
         if use_calibration_file:
-            if os.path.exists(self.calibration_file) and os.path.isfile(self.calibration_file):
+            if os.path.isfile(self.calibration_file):
                 print(f"\n--- Loading joint limits from {self.calibration_file} ---")
                 with open(self.calibration_file, 'r') as f:
                     # JSON keys are strings, so convert them back to integers
@@ -624,8 +625,6 @@ class ServoController:
             sys.stdout.write("\033[F"*num_lines)
             sys.stdout.write(output_str)
             sys.stdout.flush()
-
-            time.sleep(1.0/frequency)
 
         print("\n\n--- Calibration Complete ---")
         self.joint_limits = joint_limits
